@@ -9,9 +9,11 @@
 #define PH_PIN A1
 #define ONE_WIRE_BUS 2
 #define TRANSISTOR_SWITCH_PIN 3
+#define BUTTON_SWITCH_PIN 4
 
 #define ONE_SECOND (1000UL)
 #define ONE_MINUTE (ONE_SECOND * 60UL)
+#define FIFTEEN_MINUTES (ONE_MINUTE * 15UL)
 #define ONE_HOUR (ONE_MINUTE * 60UL)
 
 // Setup LCD
@@ -24,6 +26,21 @@ DFRobot_PH ph_meter;
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature temp_meter(&oneWire);
 
+void cal_ph(float temperature) {
+  // Get pin voltage and convert to pH
+  float voltage = analogRead(PH_PIN) / 1024.0 * 5000;
+  float ph = ph_meter.readPH(voltage, temperature);
+
+  // Enable PH calibration from the console
+  ph_meter.calibration(voltage, temperature);
+
+  Serial.print("Calibration voltage: ");
+  Serial.println(voltage);
+
+  Serial.print("Calibration pH: ");
+  Serial.println(ph);
+}
+
 float get_ph(float temperature) {
   const int max_samples = 10;
   float voltage = 0.00;
@@ -32,23 +49,28 @@ float get_ph(float temperature) {
   // Turn sensors on
   turn_sensors(true);
 
-  // Enable PH calibration from the console
-  ph_meter.calibration(voltage, temperature);
-
   // Make several measurements
   for (int i = 0; i < max_samples; ++i) {
+    // Small delay
+    delay(1000U);
+
     // Get pin voltage and convert to pH
     voltage = analogRead(PH_PIN) / 1024.0 * 5000;
 
     // Convert voltage to pH with temperature compensation
-    result += ph_meter.readPH(voltage, temperature);
+    float sample = ph_meter.readPH(voltage, temperature);
 
-    // Small delay
-    delay(100U);
+    Serial.print("Sample pH: ");
+    Serial.println(sample);
+
+    result += sample;
   }
 
   // Get average number
   result = result / max_samples;
+
+  Serial.print("Result pH: ");
+  Serial.println(result);
 
   // Turn sensors off
   turn_sensors(false);
@@ -71,17 +93,22 @@ float get_temp() {
   // Make several measurements
   for (int i = 0; i < max_samples; ++i) {
     // Request the temperature
+    // Takes ~1 sec to get data
     temp_meter.requestTemperatures();
 
     // There are could be several sensors on one wire
-    result += temp_meter.getTempCByIndex(0);
+    float sample = temp_meter.getTempCByIndex(0);
+    Serial.print("Sample temperature: ");
+    Serial.println(sample);
 
-    // Small delay
-    delay(100U);
+    result += sample;
   }
 
   // Get average number
   result = result / max_samples;
+
+  Serial.print("Result temperature: ");
+  Serial.println(result);
 
   // Turn sensors off
   turn_sensors(false);
@@ -95,11 +122,18 @@ float get_temp() {
 }
 
 void turn_sensors(bool state) {
+  // Small delay before
+  delay(500U);
+
+  // Switch on/off
   if (state) {
     digitalWrite(TRANSISTOR_SWITCH_PIN, HIGH);
   } else {
     digitalWrite(TRANSISTOR_SWITCH_PIN, LOW);
   }
+
+  // Small delay after
+  delay(500U);
 }
 
 void lcd_print(float temp, float ph, long next) {
@@ -138,20 +172,6 @@ void lcd_print(float temp, float ph, long next) {
   lcd.print("    ");
 }
 
-void serial_print(float temp, float ph) {
-  Serial.print("temperature:");
-  Serial.println(temp);
-
-  Serial.print("pH: ");
-  Serial.println(ph);
-
-  // Serial.print("TDS:");
-  // Serial.println(tds);
-
-  // Serial.print("WTR: ");
-  // Serial.println(water);
-}
-
 void setup() {
   // Init LCD
   lcd.init();
@@ -166,17 +186,28 @@ void setup() {
 
   // Setup transistor pin
   pinMode(TRANSISTOR_SWITCH_PIN, OUTPUT);
+
+  // Configure the button
+  pinMode(BUTTON_SWITCH_PIN, INPUT_PULLUP);
+
+
+
+  // Turn sensors on
+  turn_sensors(true);
 }
 
 void loop() {
   static unsigned long timepoint = millis();
   static float temperature = get_temp();
-  static float ph = get_ph(temperature);
+  static float ph = get_ph(temperature) + 1.00;
+
+  // Get button state
+  bool pressed_button = (digitalRead(BUTTON_SWITCH_PIN) == LOW);
 
   // Wait 1 hour for the next measuring
   unsigned long timer = millis() - timepoint;
-  long next = (ONE_HOUR - timer) / 1000UL;
-  if (timer >= ONE_HOUR) {
+  long next = (FIFTEEN_MINUTES - timer) / 1000UL;
+  if ((timer >= FIFTEEN_MINUTES) || pressed_button) {
     timepoint = millis();
     next = 0;
 
@@ -185,9 +216,10 @@ void loop() {
     ph = get_ph(temperature);
   }
 
+  //cal_ph(20.00);
+
   // Print measurements
   lcd_print(temperature, ph, next);
-  serial_print(temperature, ph);
 
   // Delay for 1 second
   delay(1000U);
